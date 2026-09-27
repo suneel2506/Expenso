@@ -10,6 +10,7 @@ import {
   where,
   getDocs,
   onSnapshot,
+  deleteDoc,
   Unsubscribe,
 } from 'firebase/firestore';
 import { EventModel } from '../types';
@@ -134,4 +135,20 @@ export function subscribeToFirestoreEvent(
       console.warn('Firestore subscription error:', error);
     }
   );
+}
+
+/**
+ * Permanently delete an event from Firestore
+ */
+export async function deleteEventFromFirestore(eventId: string, code?: string): Promise<void> {
+  try {
+    const eventRef = doc(db, 'events', eventId);
+    await deleteDoc(eventRef);
+    if (code) {
+      const codeRef = doc(db, 'event_codes', code.toUpperCase());
+      await deleteDoc(codeRef);
+    }
+  } catch (err) {
+    console.warn('Failed to delete event from Firestore:', err);
+  }
 }

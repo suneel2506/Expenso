@@ -17,7 +17,7 @@ import {
 } from '../types';
 import { createPondicherryDemoTrip, createTechnovaDemoEvent, DEMO_ORGANIZATION, DEMO_USER } from '../utils/demoData';
 import { generateTripCode, getApprovalThresholdRole, getMemberColor } from '../utils/calculations';
-import { saveEventToFirestore, fetchEventByCode, subscribeToFirestoreEvent } from '../utils/firebase';
+import { saveEventToFirestore, fetchEventByCode, subscribeToFirestoreEvent, deleteEventFromFirestore } from '../utils/firebase';
 
 interface AppContextType {
   currentUser: UserProfile;
@@ -181,6 +181,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     if (activeEventId) {
       localStorage.setItem(STORAGE_KEY_ACTIVE_EVENT, activeEventId);
+    } else {
+      localStorage.removeItem(STORAGE_KEY_ACTIVE_EVENT);
     }
   }, [activeEventId]);
 
@@ -1266,17 +1268,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Delete Event
   const deleteEvent = useCallback(
     async (eventId: string) => {
+      const target = events.find((e) => e.id === eventId);
       const remaining = events.filter((e) => e.id !== eventId);
       setEvents(remaining);
+      try {
+        localStorage.setItem(STORAGE_KEY_EVENTS, JSON.stringify(remaining));
+      } catch (e) {
+        console.error(e);
+      }
       if (remaining.length > 0) {
         setActiveEventId(remaining[0].id);
       } else {
         setActiveEventId(null);
+        try {
+          localStorage.removeItem(STORAGE_KEY_ACTIVE_EVENT);
+        } catch (e) {
+          console.error(e);
+        }
       }
       try {
         await fetch(`/api/trips/${eventId}`, { method: 'DELETE' });
       } catch (e) {
         console.error(e);
+      }
+      if (target) {
+        try {
+          await deleteEventFromFirestore(target.id, target.code);
+        } catch (e) {
+          console.warn('Firestore deletion failed:', e);
+        }
       }
     },
     [events]
