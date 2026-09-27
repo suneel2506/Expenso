@@ -143,45 +143,82 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClos
 
   if (!isOpen || !activeEvent) return null;
 
+  // Helper to compress image client-side to ensure it stays well under Vercel's 4.5MB payload limit
+  const compressImage = (file: File, maxWidth = 1400, quality = 0.82): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxWidth || height > maxWidth) {
+            if (width > height) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            } else {
+              width = Math.round((width * maxWidth) / height);
+              height = maxWidth;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(e.target?.result as string);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressed);
+        };
+        img.onerror = () => resolve(e.target?.result as string);
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
+
   // Handle image upload and trigger AI OCR scan
-  const handleImageFile = (file: File) => {
+  const handleImageFile = async (file: File) => {
     if (!file) return;
 
-    if (file.size > 15 * 1024 * 1024) {
-      setScanError('Image is too large (max 15MB). Please choose a smaller photo.');
-      return;
-    }
+    setScanError(null);
+    setCurrentStep('scanning');
+    setScanStatusIndex(0);
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const base64Data = e.target?.result as string;
+    const interval = setInterval(() => {
+      setScanStatusIndex((prev) => (prev < scanStages.length - 1 ? prev + 1 : prev));
+    }, 700);
+
+    try {
+      // Compress image client-side before sending to serverless endpoint
+      const base64Data = await compressImage(file);
       setBillImage(base64Data);
-      setScanError(null);
-      setCurrentStep('scanning');
 
-      setScanStatusIndex(0);
-      const interval = setInterval(() => {
-        setScanStatusIndex((prev) => (prev < scanStages.length - 1 ? prev + 1 : prev));
-      }, 700);
+      const response = await fetch('/api/scan-bill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64Data,
+          mimeType: 'image/jpeg',
+        }),
+      });
 
-      try {
-        const response = await fetch('/api/scan-bill', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageBase64: base64Data,
-            mimeType: file.type || 'image/jpeg',
-          }),
-        });
+      clearInterval(interval);
 
-        clearInterval(interval);
-
+      if (response.ok) {
         const result = await response.json();
-        if (response.ok && result.success && result.data) {
+        if (result.success && result.data) {
           const extracted = result.data;
           setOcrData(extracted);
-          setMerchant(extracted.merchant || '');
-          if (extracted.amount) setAmount(extracted.amount.toString());
+          if (extracted.merchant && extracted.merchant !== 'Unknown Merchant' && extracted.merchant !== 'Scanned Bill') {
+            setMerchant(extracted.merchant);
+          }
+          if (extracted.amount && extracted.amount > 0) {
+            setAmount(extracted.amount.toString());
+          }
           if (extracted.date) setDate(extracted.date);
           if (extracted.category && CATEGORY_CONFIG[extracted.category]) {
             setCategory(extracted.category as ExpenseCategory);
@@ -191,20 +228,19 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClos
           }
 
           setCurrentStep('verify');
-        } else {
-          setScanError(result.error || "We couldn't read this bill clearly. You can enter the details manually.");
-          setCurrentStep('input');
-          setMethod('manual');
+          return;
         }
-      } catch (err: any) {
-        clearInterval(interval);
-        console.error('Scan failed:', err);
-        setScanError("Connection issue while reading bill. You can enter the details manually.");
-        setCurrentStep('input');
-        setMethod('manual');
       }
-    };
-    reader.readAsDataURL(file);
+      
+      // If scanning did not return extracted fields, proceed gracefully with receipt attached
+      setCurrentStep('input');
+      setMethod('manual');
+    } catch (err: any) {
+      clearInterval(interval);
+      console.warn('Scan request error, continuing to manual entry:', err);
+      setCurrentStep('input');
+      setMethod('manual');
+    }
   };
 
   // Generate description using AI
