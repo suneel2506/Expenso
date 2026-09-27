@@ -1,0 +1,8 @@
+{
+  "name": "Remix Expenso (OG)",
+  "description": "Every expense. One place. Modern mobile-first group travel expense splitter with AI bill scanning, smart debt simplification, and instant settling.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
