@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, KeyRound, User, Check, AlertCircle } from 'lucide-react';
+import { X, KeyRound, User, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 interface JoinTripModalProps {
@@ -17,33 +17,45 @@ export const JoinTripModal: React.FC<JoinTripModalProps> = ({
 
   const [code, setCode] = useState('');
   const [name, setName] = useState(currentUser.name || '');
+  const [isJoining, setIsJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [welcomeMessage, setWelcomeMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!code.trim()) {
+    const cleanCode = code.trim().toUpperCase();
+    const cleanName = name.trim();
+
+    if (!cleanCode) {
       setError('Please enter the 6-character event code.');
       return;
     }
-    if (!name.trim()) {
+    if (!cleanName) {
       setError('Please enter your name.');
       return;
     }
 
-    const res = joinEvent(code, name);
-    if (res.success && res.event) {
-      setWelcomeMessage(`Welcome to ${res.event.name}, ${name.trim()}! 🎉`);
-      setTimeout(() => {
-        if (onJoinedSuccess) onJoinedSuccess();
-        onClose();
-      }, 1500);
-    } else {
-      setError(res.error || 'Invalid event code. Please double check with your organizer.');
+    setIsJoining(true);
+    try {
+      const res = await joinEvent(cleanCode, cleanName);
+      if (res.success && res.event) {
+        setWelcomeMessage(`Welcome to ${res.event.name}, ${cleanName}! 🎉`);
+        setTimeout(() => {
+          if (onJoinedSuccess) onJoinedSuccess();
+          onClose();
+        }, 1500);
+      } else {
+        setError(res.error || 'Event not found with this code. Check with your event organizer!');
+      }
+    } catch (err: any) {
+      console.error('Join error:', err);
+      setError(err?.message || 'Failed to connect. Please check your internet connection.');
+    } finally {
+      setIsJoining(false);
     }
   };
 
@@ -124,9 +136,17 @@ export const JoinTripModal: React.FC<JoinTripModalProps> = ({
               <div className="pt-2">
                 <button
                   type="submit"
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors"
+                  disabled={isJoining}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2"
                 >
-                  Join Event
+                  {isJoining ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Verifying & Connecting...</span>
+                    </>
+                  ) : (
+                    <span>Join Event</span>
+                  )}
                 </button>
               </div>
             </form>

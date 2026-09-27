@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "entities": {
+    "Event": {
+      "title": "Event",
+      "description": "Represents an event or trip with shared expenses, budget, members, and real-time state.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the event"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the event or trip"
+        },
+        "code": {
+          "type": "string",
+          "description": "6-character unique join code",
+          "minLength": 5,
+          "maxLength": 8
+        },
+        "eventType": {
+          "type": "string",
+          "description": "Type of event, e.g. IV Trip, College Fest, Department"
+        },
+        "description": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "startDate": {
+          "type": "string"
+        },
+        "endDate": {
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "totalBudget": {
+          "type": "number"
+        },
+        "budgetAllocationMode": {
+          "type": "string"
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "name", "code", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/events/{eventId}": {
+      "schema": "Event",
+      "description": "Collection of all events accessible by 6-char code or direct ID"
+    }
+  }
+}

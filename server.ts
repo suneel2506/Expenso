@@ -177,8 +177,15 @@ app.post('/api/broadcast', (req: Request, res: Response) => {
 });
 
 // API Routes for Trips
-app.get('/api/trips', (_req: Request, res: Response) => {
+app.get('/api/trips', (req: Request, res: Response) => {
+  const { code } = req.query;
   const data = readStoredData();
+  if (code) {
+    const cleanCode = String(code).trim().toUpperCase();
+    const trip = data.trips.find((t: any) => t.code?.toUpperCase() === cleanCode);
+    if (trip) return res.json({ trip });
+    return res.status(404).json({ error: 'Trip not found with this code' });
+  }
   res.json({ trips: data.trips });
 });
 

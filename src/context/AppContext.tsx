@@ -17,6 +17,7 @@ import {
 } from '../types';
 import { createPondicherryDemoTrip, createTechnovaDemoEvent, DEMO_ORGANIZATION, DEMO_USER } from '../utils/demoData';
 import { generateTripCode, getApprovalThresholdRole, getMemberColor } from '../utils/calculations';
+import { saveEventToFirestore, fetchEventByCode, subscribeToFirestoreEvent } from '../utils/firebase';
 
 interface AppContextType {
   currentUser: UserProfile;
@@ -34,7 +35,7 @@ interface AppContextType {
     startDate?: string,
     endDate?: string
   ) => EventModel;
-  joinEvent: (code: string, userName: string) => { success: boolean; error?: string; event?: EventModel };
+  joinEvent: (code: string, userName: string) => Promise<{ success: boolean; error?: string; event?: EventModel }>;
   
   // Money In & Budget
   addIncomeRecord: (record: Omit<IncomeRecord, 'id' | 'createdAt'>) => Promise<void>;
@@ -259,11 +260,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [activeEventId, isOnline]);
 
-  // Helper to persist event update to backend
+  // Listen to Firestore real-time updates for activeEventId
+  useEffect(() => {
+    if (!activeEventId) return;
+
+    try {
+      const unsubscribe = subscribeToFirestoreEvent(activeEventId, (updated) => {
+        if (updated && updated.id === activeEventId) {
+          setEvents((prev) => {
+            const idx = prev.findIndex((e) => e.id === updated.id);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = updated;
+              return next;
+            }
+            return [updated, ...prev];
+          });
+        }
+      });
+
+      return () => {
+        unsubscribe();
+      };
+    } catch (err) {
+      console.warn('Firestore subscription setup error:', err);
+    }
+  }, [activeEventId]);
+
+  // Helper to persist event update to Firestore and backend
   const syncEventToBackend = useCallback(
     async (updatedEvent: EventModel) => {
       setIsSyncing(true);
       try {
+        // 1. Sync to Firestore (cross-device real-time cloud database)
+        await saveEventToFirestore(updatedEvent);
+
+        // 2. Also sync to backend API
         if (isOnline) {
           await fetch(`/api/trips/${updatedEvent.id}`, {
             method: 'PUT',
@@ -272,7 +304,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           });
         }
       } catch (err) {
-        console.warn('Backend sync failed:', err);
+        console.warn('Sync failed:', err);
       } finally {
         setIsSyncing(false);
       }
@@ -455,19 +487,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [currentUser, syncEventToBackend, logAudit]
   );
 
-  // Join Event by 6-char code
+  // Join Event by 6-char code (from local memory, Firestore cloud database, or backend API)
   const joinEvent = useCallback(
-    (code: string, userName: string): { success: boolean; error?: string; event?: EventModel } => {
+    async (code: string, userName: string): Promise<{ success: boolean; error?: string; event?: EventModel }> => {
       const cleanCode = code.trim().toUpperCase();
       const cleanName = userName.trim();
 
       if (!cleanCode || cleanCode.length < 5) {
-        return { success: false, error: 'Please enter a valid event code.' };
+        return { success: false, error: 'Please enter a valid 6-character event code.' };
       }
 
-      const foundEvent = events.find((e) => e.code.toUpperCase() === cleanCode);
+      // 1. Check local state first
+      let foundEvent = events.find((e) => e.code.toUpperCase() === cleanCode);
+
+      // 2. If not found locally, query Firestore cloud database
       if (!foundEvent) {
-        return { success: false, error: 'Event not found with this code. Check with your event organizer!' };
+        try {
+          const cloudEvent = await fetchEventByCode(cleanCode);
+          if (cloudEvent) {
+            foundEvent = cloudEvent;
+          }
+        } catch (err) {
+          console.warn('Firestore code lookup error:', err);
+        }
+      }
+
+      // 3. Fallback: Query backend API /api/trips?code=...
+      if (!foundEvent) {
+        try {
+          const res = await fetch(`/api/trips?code=${cleanCode}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.trip) {
+              foundEvent = data.trip;
+            } else if (Array.isArray(data?.trips)) {
+              foundEvent = data.trips.find((t: any) => t.code?.toUpperCase() === cleanCode);
+            }
+          }
+        } catch (err) {
+          console.warn('API code lookup error:', err);
+        }
+      }
+
+      if (!foundEvent) {
+        return {
+          success: false,
+          error: `Event not found with code "${cleanCode}". Check with your event organizer!`,
+        };
       }
 
       const existingMember = foundEvent.members.find(
@@ -475,6 +541,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
 
       if (existingMember) {
+        setEvents((prev) => {
+          const idx = prev.findIndex((e) => e.id === foundEvent!.id);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = foundEvent!;
+            return next;
+          }
+          return [foundEvent!, ...prev];
+        });
         setActiveEventId(foundEvent.id);
         setCurrentUser((u) => ({ ...u, name: cleanName }));
         return { success: true, event: foundEvent };
@@ -497,11 +572,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       updatedEvent = logAudit(updatedEvent, 'MEMBER_JOINED', `${cleanName} joined the event via code ${cleanCode}`);
 
-      setEvents((prev) => prev.map((e) => (e.id === foundEvent.id ? updatedEvent : e)));
-      setActiveEventId(foundEvent.id);
+      setEvents((prev) => {
+        const idx = prev.findIndex((e) => e.id === updatedEvent.id);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = updatedEvent;
+          return next;
+        }
+        return [updatedEvent, ...prev];
+      });
+
+      setActiveEventId(updatedEvent.id);
       setCurrentUser((u) => ({ ...u, name: cleanName }));
-      syncEventToBackend(updatedEvent);
-      broadcastChange('SYNC_EVENT', updatedEvent);
+      await syncEventToBackend(updatedEvent);
+      await broadcastChange('SYNC_EVENT', updatedEvent);
 
       return { success: true, event: updatedEvent };
     },

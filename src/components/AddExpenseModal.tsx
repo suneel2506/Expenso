@@ -19,7 +19,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { CATEGORY_CONFIG, calculateEqualSplits, calculatePercentageSplits, formatINR, validateUnequalSplits } from '../utils/calculations';
+import { CATEGORY_CONFIG, formatINR } from '../utils/calculations';
 import { ExpenseCategory, ExtractedOcrData, PaymentSource, SplitMethod } from '../types';
 
 interface AddExpenseModalProps {
@@ -28,7 +28,7 @@ interface AddExpenseModalProps {
   initialExpense?: any; // For editing
 }
 
-type Step = 'input' | 'scanning' | 'verify' | 'split';
+type Step = 'input' | 'scanning' | 'verify';
 
 export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClose, initialExpense }) => {
   const { activeEvent, currentUser, addExpense, updateExpense, broadcastChange } = useApp();
@@ -270,21 +270,6 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClos
     }
   };
 
-  const toggleMember = (memberId: string) => {
-    setSelectedMemberIds((prev) => {
-      if (prev.includes(memberId)) {
-        if (prev.length === 1) return prev;
-        return prev.filter((id) => id !== memberId);
-      } else {
-        return [...prev, memberId];
-      }
-    });
-  };
-
-  const selectAllMembers = () => {
-    setSelectedMemberIds(activeEvent.members.map((m) => m.id));
-  };
-
   const handleSave = async () => {
     setValidationError(null);
     const parsedAmount = parseFloat(amount);
@@ -299,57 +284,23 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClos
       return;
     }
 
-    if (selectedMemberIds.length === 0) {
-      setValidationError('Please select at least one participant.');
-      return;
-    }
-
-    const payer = activeEvent.members.find((m) => m.id === paidByMemberId);
-    if (!payer) {
-      setValidationError('Please select who paid for this expense.');
-      return;
-    }
+    const payer =
+      activeEvent.members.find((m) => m.id === paidByMemberId) ||
+      activeEvent.members[0] || {
+        id: currentUser.id || 'payer-1',
+        name: currentUser.name || 'Organizer',
+      };
 
     const team = activeEvent.teams.find((t) => t.id === teamId);
 
-    const participants = activeEvent.members.filter((m) => selectedMemberIds.includes(m.id));
-    let splits: any[] = [];
-
-    if (splitMethod === 'equal') {
-      splits = calculateEqualSplits(parsedAmount, participants);
-    } else if (splitMethod === 'unequal') {
-      const customItems = participants.map((p) => ({
-        shareAmount: parseFloat(customShares[p.id] || '0') || 0,
-      }));
-      const validation = validateUnequalSplits(parsedAmount, customItems);
-      if (!validation.isValid) {
-        setValidationError(
-          `Sum of member shares (${formatINR(
-            customItems.reduce((acc, c) => acc + c.shareAmount, 0)
-          )}) does not match total expense amount (${formatINR(parsedAmount)}). Difference: ${formatINR(
-            Math.abs(validation.diff)
-          )}`
-        );
-        return;
-      }
-
-      splits = participants.map((p) => ({
-        memberId: p.id,
-        memberName: p.name,
-        shareAmount: parseFloat(customShares[p.id] || '0') || 0,
-      }));
-    } else if (splitMethod === 'percentage') {
-      const pctItems = participants.map((p) => ({
-        member: p,
-        percentage: parseFloat(percentageShares[p.id] || '0') || 0,
-      }));
-      const totalPct = pctItems.reduce((acc, c) => acc + c.percentage, 0);
-      if (Math.abs(totalPct - 100) > 0.1) {
-        setValidationError(`Total percentage must equal 100%. Current total: ${totalPct.toFixed(1)}%`);
-        return;
-      }
-      splits = calculatePercentageSplits(parsedAmount, pctItems);
-    }
+    // Single person spends the money
+    const splits = [
+      {
+        memberId: payer.id,
+        memberName: payer.name,
+        shareAmount: parsedAmount,
+      },
+    ];
 
     setIsSubmitting(true);
     try {
@@ -424,7 +375,7 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClos
                 {initialExpense ? 'Edit Expense' : 'Add New Expense'}
               </h2>
               <p className="text-xs text-slate-500">
-                {activeEvent.name} · {selectedCount} participants
+                {activeEvent.name}
               </p>
             </div>
           </div>
@@ -564,13 +515,31 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClos
                 </div>
               )}
 
-              <div className="pt-2">
+              <div className="pt-2 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setCurrentStep('split')}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 transition-colors"
+                  onClick={() => setCurrentStep('input')}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors"
                 >
-                  <span>Confirm Expense & Select Payer →</span>
+                  Edit Details
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={handleSave}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2 transition-colors"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>Save Expense</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -708,6 +677,34 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClos
                   </div>
                 </div>
 
+                {/* Who Paid (Payer) */}
+                {activeEvent.members.length > 1 ? (
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                      Who Paid?
+                    </label>
+                    <select
+                      value={paidByMemberId}
+                      onChange={(e) => setPaidByMemberId(e.target.value)}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800"
+                    >
+                      {activeEvent.members.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                    <span className="text-slate-500 font-bold">Paid By:</span>
+                    <span className="font-extrabold text-slate-800 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      {activeEvent.members[0]?.name || currentUser.name || 'Eren'}
+                    </span>
+                  </div>
+                )}
+
                 {/* Payment Source Selection */}
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
@@ -840,226 +837,28 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClos
                 )}
               </div>
 
-              {/* Continue to Split button */}
+              {/* Save Expense button */}
               <div className="pt-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    const parsed = parseFloat(amount);
-                    if (isNaN(parsed) || parsed <= 0) {
-                      setValidationError('Please enter a valid amount.');
-                      return;
-                    }
-                    if (!merchant.trim()) {
-                      setValidationError('Please enter a merchant name.');
-                      return;
-                    }
-                    setValidationError(null);
-                    setCurrentStep('split');
-                  }}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-2xl shadow-xs flex items-center justify-center gap-2 transition-colors"
+                  disabled={isSubmitting}
+                  onClick={handleSave}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-2xl shadow-xs flex items-center justify-center gap-2 transition-colors"
                 >
-                  <span>Continue to Payer & Split →</span>
+                  {isSubmitting ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Saving Expense...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-4 h-4" />
+                      <span>Save Expense</span>
+                    </>
+                  )}
                 </button>
               </div>
             </>
-          )}
-
-          {/* STEP 3: PAYER & PARTICIPANTS SPLIT */}
-          {currentStep === 'split' && (
-            <div className="space-y-5">
-              <button
-                type="button"
-                onClick={() => setCurrentStep('input')}
-                className="text-xs font-bold text-slate-500 hover:text-slate-800 flex items-center gap-1"
-              >
-                ← Back to details
-              </button>
-
-              {/* Payer Selection */}
-              <div>
-                <label className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
-                  Who paid this expense?
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {activeEvent.members.map((member) => {
-                    const isSelected = paidByMemberId === member.id;
-                    return (
-                      <button
-                        key={member.id}
-                        type="button"
-                        onClick={() => setPaidByMemberId(member.id)}
-                        className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all ${
-                          isSelected
-                            ? 'bg-emerald-50 border-emerald-500 ring-1 ring-emerald-500 text-slate-900'
-                            : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div
-                          className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                          style={{ backgroundColor: member.color }}
-                        >
-                          {member.name.charAt(0)}
-                        </div>
-                        <span className="text-xs font-bold truncate flex-1">{member.name}</span>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Split Mode Tabs */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-                    Split Mode
-                  </label>
-                  <span className="text-xs text-slate-500 font-bold">
-                    Total: {formatINR(parseFloat(amount) || 0)}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 p-1 bg-slate-100 rounded-xl text-xs font-bold">
-                  <button
-                    type="button"
-                    onClick={() => setSplitMethod('equal')}
-                    className={`py-1.5 rounded-lg transition-colors ${
-                      splitMethod === 'equal'
-                        ? 'bg-white text-emerald-800 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Equal Split
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSplitMethod('unequal')}
-                    className={`py-1.5 rounded-lg transition-colors ${
-                      splitMethod === 'unequal'
-                        ? 'bg-white text-emerald-800 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Unequal (₹)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSplitMethod('percentage')}
-                    className={`py-1.5 rounded-lg transition-colors ${
-                      splitMethod === 'percentage'
-                        ? 'bg-white text-emerald-800 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Percentage (%)
-                  </button>
-                </div>
-              </div>
-
-              {/* Participants Selector & Shares */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-xs font-black uppercase tracking-wider text-slate-500">
-                    Participants ({selectedCount}/{activeEvent.members.length})
-                  </label>
-                  <button
-                    type="button"
-                    onClick={selectAllMembers}
-                    className="text-xs font-extrabold text-emerald-600 hover:text-emerald-700"
-                  >
-                    Select All
-                  </button>
-                </div>
-
-                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                  {activeEvent.members.map((member) => {
-                    const isParticipating = selectedMemberIds.includes(member.id);
-
-                    return (
-                      <div
-                        key={member.id}
-                        className={`flex items-center justify-between p-2.5 rounded-xl border transition-all ${
-                          isParticipating
-                            ? 'bg-white border-slate-300 shadow-xs'
-                            : 'bg-slate-50 border-slate-200 opacity-60'
-                        }`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggleMember(member.id)}
-                          className="flex items-center gap-2.5 flex-1 text-left min-w-0"
-                        >
-                          <div
-                            className={`w-5 h-5 rounded-md flex items-center justify-center border transition-colors ${
-                              isParticipating
-                                ? 'bg-emerald-600 border-emerald-600 text-white'
-                                : 'bg-white border-slate-300'
-                            }`}
-                          >
-                            {isParticipating && <Check className="w-3.5 h-3.5" />}
-                          </div>
-                          <span className="text-xs font-bold text-slate-800 truncate">
-                            {member.name}
-                          </span>
-                        </button>
-
-                        {isParticipating && (
-                          <div className="shrink-0 flex items-center gap-1">
-                            {splitMethod === 'equal' && (
-                              <span className="text-xs font-black text-slate-800 tabular-nums">
-                                {formatINR(currentEqualShare)}
-                              </span>
-                            )}
-
-                            {splitMethod === 'unequal' && (
-                              <div className="relative">
-                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">
-                                  ₹
-                                </span>
-                                <input
-                                  type="number"
-                                  step="any"
-                                  placeholder="0"
-                                  value={customShares[member.id] || ''}
-                                  onChange={(e) => {
-                                    setCustomShares({
-                                      ...customShares,
-                                      [member.id]: e.target.value,
-                                    });
-                                  }}
-                                  className="w-24 pl-5 pr-2 py-1 text-xs font-extrabold text-right bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-1 focus:ring-emerald-500 tabular-nums"
-                                />
-                              </div>
-                            )}
-
-                            {splitMethod === 'percentage' && (
-                              <div className="relative">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  placeholder="0"
-                                  value={percentageShares[member.id] || ''}
-                                  onChange={(e) => {
-                                    setPercentageShares({
-                                      ...percentageShares,
-                                      [member.id]: e.target.value,
-                                    });
-                                  }}
-                                  className="w-20 pl-2 pr-5 py-1 text-xs font-extrabold text-right bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-1 focus:ring-emerald-500 tabular-nums"
-                                />
-                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 font-bold">
-                                  %
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
           )}
         </div>
 
@@ -1073,47 +872,24 @@ export const AddExpenseModal: React.FC<AddExpenseModalProps> = ({ isOpen, onClos
             Cancel
           </button>
 
-          {currentStep === 'split' ? (
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handleSave}
-              className="py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-xs flex items-center gap-2 transition-colors"
-            >
-              {isSubmitting ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Saving...</span>
-                </>
-              ) : (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>Save Expense</span>
-                </>
-              )}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                const parsed = parseFloat(amount);
-                if (isNaN(parsed) || parsed <= 0) {
-                  setValidationError('Please enter a valid amount.');
-                  return;
-                }
-                if (!merchant.trim()) {
-                  setValidationError('Please enter a merchant name.');
-                  return;
-                }
-                setValidationError(null);
-                setCurrentStep('split');
-              }}
-              className="py-2.5 px-5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-xs flex items-center gap-1.5 transition-colors"
-            >
-              <span>Next</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={isSubmitting}
+            onClick={handleSave}
+            className="py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-xs flex items-center gap-2 transition-colors"
+          >
+            {isSubmitting ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Saving...</span>
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4" />
+                <span>Save Expense</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
     </div>

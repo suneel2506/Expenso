@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Wallet,
   TrendingDown,
@@ -15,6 +15,9 @@ import {
   Users,
   PieChart,
   HandCoins,
+  Copy,
+  Check,
+  Share2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { calculateEventWallet, formatINR, getBudgetHealthStatus, CATEGORY_CONFIG } from '../utils/calculations';
@@ -32,8 +35,44 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenMoreSubTab,
 }) => {
   const { activeEvent, currentRole, setSelectedExpense } = useApp();
+  const [copiedCode, setCopiedCode] = useState(false);
 
   if (!activeEvent) return null;
+
+  const handleCopyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(activeEvent.code);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleShareInvite = async () => {
+    const inviteUrl = `${window.location.origin}/?join=${activeEvent.code}`;
+    const shareText = `Join "${activeEvent.name}" on Expenso using event code: ${activeEvent.code}\n${inviteUrl}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Join ${activeEvent.name} on Expenso`,
+          text: shareText,
+          url: inviteUrl,
+        });
+        return;
+      } catch {
+        // user cancelled or share failed
+      }
+    }
+    // Fallback to clipboard
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
 
   const wallet = calculateEventWallet(activeEvent);
 
@@ -82,8 +121,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="text-3xl sm:text-4xl font-black text-emerald-400 tabular-nums">
             <AnimatedCounter value={wallet.availableCash} />
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-700/60 pt-2">
-            <span>Code: <strong className="text-slate-200 font-mono uppercase">{activeEvent.code}</strong></span>
+          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-700/60 pt-2 flex-wrap gap-2">
+            <div className="flex items-center gap-1.5">
+              <span>Event Code:</span>
+              <button
+                onClick={handleCopyCode}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-700/80 hover:bg-slate-700 text-emerald-400 font-mono font-bold uppercase transition-colors"
+                title="Click to copy event code"
+              >
+                <span>{activeEvent.code}</span>
+                {copiedCode ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 opacity-60" />}
+              </button>
+              <button
+                onClick={handleShareInvite}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 font-medium transition-colors"
+                title="Share invite link"
+              >
+                <Share2 className="w-3 h-3" />
+                <span>Share</span>
+              </button>
+            </div>
             <span>{activeEvent.startDate} to {activeEvent.endDate}</span>
           </div>
         </div>
