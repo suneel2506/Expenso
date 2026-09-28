@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, KeyRound, User, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { extractEventCode } from '../utils/firebase';
 
 interface JoinTripModalProps {
   isOpen: boolean;
@@ -15,7 +16,14 @@ export const JoinTripModal: React.FC<JoinTripModalProps> = ({
 }) => {
   const { joinEvent, currentUser } = useApp();
 
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      const urlCode = p.get('join') || p.get('code') || '';
+      return extractEventCode(urlCode);
+    }
+    return '';
+  });
   const [name, setName] = useState(currentUser.name || '');
   const [isJoining, setIsJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,11 +35,11 @@ export const JoinTripModal: React.FC<JoinTripModalProps> = ({
     e.preventDefault();
     setError(null);
 
-    const cleanCode = code.trim().toUpperCase();
+    const cleanCode = extractEventCode(code);
     const cleanName = name.trim();
 
     if (!cleanCode) {
-      setError('Please enter the 6-character event code.');
+      setError('Please enter the event code.');
       return;
     }
     if (!cleanName) {
@@ -43,11 +51,14 @@ export const JoinTripModal: React.FC<JoinTripModalProps> = ({
     try {
       const res = await joinEvent(cleanCode, cleanName);
       if (res.success && res.event) {
+        if (typeof window !== 'undefined') {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
         setWelcomeMessage(`Welcome to ${res.event.name}, ${cleanName}! 🎉`);
         setTimeout(() => {
           if (onJoinedSuccess) onJoinedSuccess();
           onClose();
-        }, 1500);
+        }, 1200);
       } else {
         setError(res.error || 'Event not found with this code. Check with your event organizer!');
       }
@@ -97,17 +108,23 @@ export const JoinTripModal: React.FC<JoinTripModalProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">
-                  6-Character Event Code *
+                  6-Character Event Code or Invite Link *
                 </label>
                 <div className="relative">
                   <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     type="text"
                     required
-                    maxLength={6}
-                    placeholder="e.g. X7K9P2"
+                    placeholder="e.g. X7K9P2 or paste invite link"
                     value={code}
-                    onChange={(e) => setCode(e.target.value.toUpperCase())}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val.includes('http') || val.includes('?') || val.includes('join') || val.includes('code') || val.length > 8) {
+                        setCode(extractEventCode(val));
+                      } else {
+                        setCode(val.toUpperCase());
+                      }
+                    }}
                     className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-black tracking-widest text-slate-900 uppercase focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>

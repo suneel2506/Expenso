@@ -1,3 +1,52 @@
 {
-  "trips": []
+  "trips": [
+    {
+      "id": "evt-technova-2026",
+      "name": "TECHNOVA 2026",
+      "code": "X7K9P2",
+      "status": "active",
+      "currency": "INR",
+      "totalBudget": 250000,
+      "teams": [],
+      "members": [
+        {
+          "id": "mem-eren",
+          "name": "Eren",
+          "role": "finance_manager"
+        }
+      ],
+      "expenses": [],
+      "budgets": [],
+      "incomeRecords": [],
+      "advances": [],
+      "reimbursements": [],
+      "vendors": [],
+      "auditLogs": [],
+      "settlements": []
+    },
+    {
+      "id": "evt-pondy-2026",
+      "name": "College IV – Pondicherry 2026",
+      "code": "IVPND6",
+      "status": "active",
+      "currency": "INR",
+      "totalBudget": 180000,
+      "teams": [],
+      "members": [
+        {
+          "id": "mem-eren-p",
+          "name": "Eren",
+          "role": "finance_manager"
+        }
+      ],
+      "expenses": [],
+      "budgets": [],
+      "incomeRecords": [],
+      "advances": [],
+      "reimbursements": [],
+      "vendors": [],
+      "auditLogs": [],
+      "settlements": []
+    }
+  ]
 }

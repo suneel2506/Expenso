@@ -17,7 +17,14 @@ import {
 } from '../types';
 import { createPondicherryDemoTrip, createTechnovaDemoEvent, DEMO_ORGANIZATION, DEMO_USER } from '../utils/demoData';
 import { generateTripCode, getApprovalThresholdRole, getMemberColor } from '../utils/calculations';
-import { saveEventToFirestore, fetchEventByCode, subscribeToFirestoreEvent, deleteEventFromFirestore } from '../utils/firebase';
+import {
+  saveEventToFirestore,
+  fetchEventByCode,
+  subscribeToFirestoreEvent,
+  deleteEventFromFirestore,
+  extractEventCode,
+  sanitizeLoadedEvent,
+} from '../utils/firebase';
 
 interface AppContextType {
   currentUser: UserProfile;
@@ -34,7 +41,7 @@ interface AppContextType {
     destination?: string,
     startDate?: string,
     endDate?: string
-  ) => EventModel;
+  ) => Promise<EventModel>;
   joinEvent: (code: string, userName: string) => Promise<{ success: boolean; error?: string; event?: EventModel }>;
   
   // Money In & Budget
@@ -342,13 +349,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Create a new Event
   const createEvent = useCallback(
-    (
+    async (
       paramsOrName: CreateEventParams | string,
       argDesc?: string,
       argDest?: string,
       argStart?: string,
       argEnd?: string
-    ): EventModel => {
+    ): Promise<EventModel> => {
       const newEventId = `evt-${Date.now()}`;
       const code = generateTripCode();
 
@@ -483,24 +490,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       setEvents((prev) => [newEvent, ...prev]);
       setActiveEventId(newEvent.id);
-      syncEventToBackend(newEvent);
+      await syncEventToBackend(newEvent);
       return newEvent;
     },
     [currentUser, syncEventToBackend, logAudit]
   );
 
-  // Join Event by 6-char code (from local memory, Firestore cloud database, or backend API)
+  // Join Event by code (from local memory, Firestore cloud database, demo presets, or backend API)
   const joinEvent = useCallback(
     async (code: string, userName: string): Promise<{ success: boolean; error?: string; event?: EventModel }> => {
-      const cleanCode = code.trim().toUpperCase();
+      const cleanCode = extractEventCode(code);
       const cleanName = userName.trim();
 
-      if (!cleanCode || cleanCode.length < 5) {
-        return { success: false, error: 'Please enter a valid 6-character event code.' };
+      if (!cleanCode || cleanCode.length < 4) {
+        return { success: false, error: 'Please enter a valid event code.' };
       }
 
       // 1. Check local state first
-      let foundEvent = events.find((e) => e.code.toUpperCase() === cleanCode);
+      let foundEvent = events.find((e) => e.code?.toUpperCase() === cleanCode);
 
       // 2. If not found locally, query Firestore cloud database
       if (!foundEvent) {
@@ -514,7 +521,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
       }
 
-      // 3. Fallback: Query backend API /api/trips?code=...
+      // 3. Fallback: Check built-in demo events
+      if (!foundEvent) {
+        if (cleanCode === 'X7K9P2' || cleanCode === 'TECHNOVA') {
+          foundEvent = createTechnovaDemoEvent();
+        } else if (cleanCode === 'IVPND6' || cleanCode === 'PONDY') {
+          foundEvent = createPondicherryDemoTrip();
+        }
+      }
+
+      // 4. Fallback: Query backend API /api/trips?code=...
       if (!foundEvent) {
         try {
           const res = await fetch(`/api/trips?code=${cleanCode}`);
@@ -534,57 +550,76 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!foundEvent) {
         return {
           success: false,
-          error: `Event not found with code "${cleanCode}". Check with your event organizer!`,
+          error: `Event not found with code "${cleanCode}". Double-check the code or ask your event organizer!`,
         };
       }
 
-      const existingMember = foundEvent.members.find(
+      // Ensure all arrays are defined
+      const sanitized = sanitizeLoadedEvent(foundEvent);
+
+      const existingMember = sanitized.members.find(
         (m) => m.name.toLowerCase() === cleanName.toLowerCase()
       );
 
       if (existingMember) {
         setEvents((prev) => {
-          const idx = prev.findIndex((e) => e.id === foundEvent!.id);
-          if (idx >= 0) {
-            const next = [...prev];
-            next[idx] = foundEvent!;
-            return next;
-          }
-          return [foundEvent!, ...prev];
+          const next = [sanitized, ...prev.filter((e) => e.id !== sanitized.id)];
+          try {
+            localStorage.setItem(STORAGE_KEY_EVENTS, JSON.stringify(next));
+          } catch {}
+          return next;
         });
-        setActiveEventId(foundEvent.id);
+        setActiveEventId(sanitized.id);
+        setActiveTab('home');
+        setMoreSubTab(null);
+        if (existingMember.role) {
+          setCurrentRole(existingMember.role);
+          try {
+            localStorage.setItem(STORAGE_KEY_ROLE, existingMember.role);
+          } catch {}
+        }
+        try {
+          localStorage.setItem(STORAGE_KEY_ACTIVE_EVENT, sanitized.id);
+          localStorage.setItem(STORAGE_KEY_USER, JSON.stringify({ ...currentUser, name: cleanName }));
+        } catch {}
         setCurrentUser((u) => ({ ...u, name: cleanName }));
-        return { success: true, event: foundEvent };
+        return { success: true, event: sanitized };
       }
 
       const newMember = {
         id: `mem-${Date.now()}`,
-        eventId: foundEvent.id,
+        eventId: sanitized.id,
         userId: currentUser.id,
         name: cleanName,
-        color: getMemberColor(foundEvent.members.length),
+        color: getMemberColor(sanitized.members.length),
         role: 'member' as UserRole,
         joinedAt: new Date().toISOString().split('T')[0],
       };
 
       let updatedEvent: EventModel = {
-        ...foundEvent,
-        members: [...foundEvent.members, newMember],
+        ...sanitized,
+        members: [...sanitized.members, newMember],
       };
 
       updatedEvent = logAudit(updatedEvent, 'MEMBER_JOINED', `${cleanName} joined the event via code ${cleanCode}`);
 
       setEvents((prev) => {
-        const idx = prev.findIndex((e) => e.id === updatedEvent.id);
-        if (idx >= 0) {
-          const next = [...prev];
-          next[idx] = updatedEvent;
-          return next;
-        }
-        return [updatedEvent, ...prev];
+        const next = [updatedEvent, ...prev.filter((e) => e.id !== updatedEvent.id)];
+        try {
+          localStorage.setItem(STORAGE_KEY_EVENTS, JSON.stringify(next));
+        } catch {}
+        return next;
       });
 
       setActiveEventId(updatedEvent.id);
+      setActiveTab('home');
+      setMoreSubTab(null);
+      setCurrentRole('member');
+      try {
+        localStorage.setItem(STORAGE_KEY_ACTIVE_EVENT, updatedEvent.id);
+        localStorage.setItem(STORAGE_KEY_ROLE, 'member');
+        localStorage.setItem(STORAGE_KEY_USER, JSON.stringify({ ...currentUser, name: cleanName }));
+      } catch {}
       setCurrentUser((u) => ({ ...u, name: cleanName }));
       await syncEventToBackend(updatedEvent);
       await broadcastChange('SYNC_EVENT', updatedEvent);

@@ -142,6 +142,7 @@ export const CreateTripModal: React.FC<CreateTripModalProps> = ({
   const [createdCode, setCreatedCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Numerical Parse Helpers
   const totalBudget = Math.max(0, parseFloat(totalBudgetInput) || 0);
@@ -208,10 +209,11 @@ export const CreateTripModal: React.FC<CreateTripModalProps> = ({
   };
 
   // Submit Event Creation
-  const handleCreateEvent = () => {
+  const handleCreateEvent = async () => {
     setError(null);
     if (!validateStep1() || !validateStep2()) return;
 
+    setIsSubmitting(true);
     try {
       const formattedCategories =
         allocationMode === 'category'
@@ -235,7 +237,7 @@ export const CreateTripModal: React.FC<CreateTripModalProps> = ({
         description: fs.description || 'Initial Funding',
       }));
 
-      const newEvent = createEvent({
+      const newEvent = await createEvent({
         name,
         eventType,
         startDate,
@@ -254,6 +256,8 @@ export const CreateTripModal: React.FC<CreateTripModalProps> = ({
       if (onTripCreated) onTripCreated();
     } catch (err: any) {
       setError(err?.message || 'Failed to create event.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1120,11 +1124,21 @@ export const CreateTripModal: React.FC<CreateTripModalProps> = ({
             {step === 3 && (
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={handleCreateEvent}
-                className="py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-1.5 transition-colors ml-auto"
+                className="py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-extrabold text-xs rounded-xl shadow-md flex items-center gap-1.5 transition-colors ml-auto"
               >
-                <Check className="w-4 h-4" />
-                <span>Create Event</span>
+                {isSubmitting ? (
+                  <>
+                    <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Creating Event...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Create Event</span>
+                  </>
+                )}
               </button>
             )}
           </div>

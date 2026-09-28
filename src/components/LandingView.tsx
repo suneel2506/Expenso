@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PWAInstallButton } from './PWAInstallButton';
+import { extractEventCode } from '../utils/firebase';
 
 interface LandingViewProps {
   onCreateEventClick: () => void;
@@ -32,7 +33,8 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const [code, setCode] = useState(() => {
     if (typeof window !== 'undefined') {
       const p = new URLSearchParams(window.location.search);
-      return (p.get('join') || p.get('code') || '').toUpperCase();
+      const urlCode = p.get('join') || p.get('code') || '';
+      return extractEventCode(urlCode);
     }
     return '';
   });
@@ -45,11 +47,11 @@ export const LandingView: React.FC<LandingViewProps> = ({
     e.preventDefault();
     setJoinError(null);
 
-    const cleanCode = code.trim().toUpperCase();
+    const cleanCode = extractEventCode(code);
     const cleanName = userName.trim();
 
     if (!cleanCode) {
-      setJoinError('Please enter the 6-character event code.');
+      setJoinError('Please enter the event code.');
       return;
     }
     if (!cleanName) {
@@ -61,6 +63,9 @@ export const LandingView: React.FC<LandingViewProps> = ({
     try {
       const res = await joinEvent(cleanCode, cleanName);
       if (res.success && res.event) {
+        if (typeof window !== 'undefined') {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
         setJoinSuccess(`Joined ${res.event.name}! Loading dashboard...`);
         setTimeout(() => {
           if (onJoinSuccess) onJoinSuccess();
@@ -179,17 +184,23 @@ export const LandingView: React.FC<LandingViewProps> = ({
               <form onSubmit={handleInlineJoin} className="space-y-3.5">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                    6-Character Event Code *
+                    Event Code or Invite Link *
                   </label>
                   <div className="relative">
                     <KeyRound className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       required
-                      maxLength={6}
-                      placeholder="e.g. 2YK4TY"
+                      placeholder="e.g. X7K9P2 or paste invite link"
                       value={code}
-                      onChange={(e) => setCode(e.target.value.toUpperCase())}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val.includes('http') || val.includes('?') || val.includes('join') || val.includes('code') || val.length > 8) {
+                          setCode(extractEventCode(val));
+                        } else {
+                          setCode(val.toUpperCase());
+                        }
+                      }}
                       className="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl text-sm font-mono font-black tracking-widest text-emerald-400 uppercase placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
                     />
                   </div>
